@@ -219,9 +219,9 @@ flowchart LR
 - 一个或多个已注册的 CodeBuddy 账号，用于 OAuth 登录
 - 宿主机 Go ≥ 1.22（仅从源码构建时需要）
 
-### 方式〇：GHCR 镜像（免克隆免构建）
+### 方式〇：Docker Hub 镜像（免本地构建）
 
-CI 会自动构建多架构镜像（`amd64` / `arm64`）并发布到 GHCR，`git clone` 之外的部署路径：
+发布工作流会构建多架构镜像（`amd64` / `arm64`）并推送到 Docker Hub 的 `<DOCKERHUB_USERNAME>/workbuddy2api-panel`。先从本仓库取得 `config.example.json`，再部署已发布的镜像：
 
 ```bash
 # 1. 准备配置与数据目录
@@ -229,20 +229,35 @@ mkdir -p auths data && cp config.example.json config.json
 #    建议编辑 config.json 设置 api_key（或留空由程序自动生成随机密钥）
 
 # 2. 拉取并运行
+DOCKERHUB_USERNAME=你的DockerHub用户名
 docker run -d --name workbuddy2api \
   -p 7863:7863 -e TZ=Asia/Shanghai \
   -v ./auths:/app/auths -v ./data:/app/data -v ./config.json:/app/config.json \
-  ghcr.io/linguo2625469/workbuddy2api-panel:latest
+  "${DOCKERHUB_USERNAME}/workbuddy2api-panel:latest"
 
 # 3. 健康检查（无可用账号时返回 503）
 curl -s http://localhost:7863/healthz
 ```
 
-> **首次发布后须将包设为公开**：GitHub 仓库页 → Packages → `workbuddy2api-panel` →
-> Package settings → Change visibility → Public，否则拉取需要 `docker login ghcr.io`。
->
-> 镜像 tag 规则：`main` 分支推送 `latest` / `main` / `sha-xxxxxx`；打 `v*` tag 额外发布
-> `1.2.3` / `1.2` / `1` 语义化版本；PR 仅构建验证、不推送。
+> 将 `DOCKERHUB_USERNAME` 替换为实际镜像命名空间。私有镜像拉取前需先执行 `docker login`。
+> 推送 `v1.2.3` 会发布 `1.2.3`、`1.2`、`latest` 和 `sha-xxxxxxx`；预发布 tag 不更新 `latest`。
+> 手动触发仅发布 `sha-xxxxxxx`，包括选择已有 tag 手动运行的情况；部署时将 `latest` 替换为该 SHA 标签。
+
+#### 配置与验证镜像发布
+
+工作流为 `.github/workflows/release.yml`，由 `v*` tag 推送或 `workflow_dispatch` 触发；分支推送和 PR 不触发镜像发布。
+
+在组织或仓库的 **Settings → Secrets and variables → Actions** 中配置：
+
+| 类型 | 名称 | 要求 |
+|---|---|---|
+| Variables | `SMTP_HOST`、`SMTP_PORT` | SMTP 主机与隐式 TLS 端口，例如 `smtp.gmail.com` / `465` |
+| Secrets | `DOCKERHUB_USERNAME`、`DOCKERHUB_ACCESSTOKEN` | 复用现有组织级配置；token 需要 Docker Hub Read & Write 权限 |
+| Secrets | `SMTP_USERNAME`、`SMTP_PASSWORD`、`SMTP_FROM`、`NOTIFY_EMAIL_TO` | SMTP 登录、应用密码、发件人与收件人；发件地址应与登录账号一致 |
+
+组织级配置必须授权给此 fork；上游配置不会随 fork 复制。用户名已使用 Secret 保存，无需再建立同名 Variable。`GITHUB_TOKEN` 由 Actions 自动提供。
+
+首次上线先在 **Actions → Docker Release → Run workflow** 手动运行，确认双架构镜像的 SHA 标签已出现在 Docker Hub，并确认 `Email workflow result` 邮件里的构建状态与运行结果一致。随后用与 `cmd/server/main.go` 中版本号对应的 `v*` tag 验证版本发布路径。通知会等待构建与推送结束，即使失败或取消也会尝试发送，并附运行链接。
 
 ### 方式一：Docker Compose（推荐服务器部署）
 
